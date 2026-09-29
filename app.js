@@ -3920,21 +3920,25 @@ function renderAnalytics() {
   }
 }
 
-// 8. Personalized Recommendations
-function getPersonalizedRecommendations() {
+// -----------------------------------------------------------------------------
+// 8. PHASE 7.1 — MULTI-MODAL SMART RECOMMENDATION ENGINE
+// -----------------------------------------------------------------------------
+let currentRecommendationMode = 'curated';
+
+function getCuratedRecommendations() {
   const { topCategory } = calculateCategoryStats();
   const recentIds = getRecentlyViewed();
   let candidateCategory = null;
-  let rationale = 'Curated For You';
+  let rationale = 'Hand-picked for your lifestyle';
 
   if (topCategory && topCategory.category) {
     candidateCategory = topCategory.category;
-    rationale = `Because you shop for ${candidateCategory}`;
+    rationale = `Based on your frequent orders in ${candidateCategory}`;
   } else if (recentIds.length > 0) {
     const firstProd = PRODUCTS.find(p => p.id === recentIds[0]);
     if (firstProd) {
       candidateCategory = firstProd.category;
-      rationale = `Because you viewed ${candidateCategory}`;
+      rationale = `Based on your browsing in ${candidateCategory}`;
     }
   }
 
@@ -3943,16 +3947,244 @@ function getPersonalizedRecommendations() {
     candidates = PRODUCTS.filter(p => p.category.toLowerCase() === candidateCategory.toLowerCase());
   }
 
-  if (candidates.length < 3) {
-    // Fill up with top-rated and best deals
+  if (candidates.length < 4) {
     const others = [...PRODUCTS].sort((a, b) => b.rating - a.rating);
     candidates = [...candidates, ...others.filter(p => !candidates.some(c => c.id === p.id))];
   }
 
   return {
-    rationale,
-    products: candidates.slice(0, 4)
+    mode: 'curated',
+    tag: 'Curated For You',
+    title: 'Recommended For You',
+    subtitle: `Personalized selections — ${rationale}`,
+    products: candidates.slice(0, 4),
+    isEmpty: false
   };
+}
+
+function getViewedRecommendations() {
+  const recentIds = getRecentlyViewed();
+  if (!recentIds || recentIds.length === 0) {
+    return {
+      mode: 'viewed',
+      tag: 'Browsing Affinity',
+      title: 'Because You Viewed',
+      subtitle: 'Matches inspired by your browsing history',
+      products: [],
+      isEmpty: true,
+      emptyIcon: '👁️',
+      emptyTitle: 'No Browsing History Yet',
+      emptySub: 'Explore our catalog and inspect products. We will instantly craft tailored recommendations based on what catches your eye!',
+      emptyBtnText: 'Browse Catalog',
+      emptyBtnAction: "document.getElementById('products').scrollIntoView({behavior:'smooth'})"
+    };
+  }
+
+  const viewedProds = recentIds.map(id => PRODUCTS.find(p => p.id === id)).filter(Boolean);
+  const primaryViewed = viewedProds[0];
+  const viewedCategories = [...new Set(viewedProds.map(p => p.category.toLowerCase()))];
+
+  let candidates = PRODUCTS.filter(p => viewedCategories.includes(p.category.toLowerCase()) && !recentIds.includes(p.id));
+  if (candidates.length < 4) {
+    const sameCat = PRODUCTS.filter(p => viewedCategories.includes(p.category.toLowerCase()));
+    candidates = [...candidates, ...sameCat.filter(p => !candidates.some(c => c.id === p.id))];
+  }
+  if (candidates.length < 4) {
+    const others = [...PRODUCTS].sort((a, b) => b.rating - a.rating);
+    candidates = [...candidates, ...others.filter(p => !candidates.some(c => c.id === p.id))];
+  }
+
+  const rationale = primaryViewed ? `Inspired by your interest in ${primaryViewed.name}` : 'Inspired by your recent views';
+
+  return {
+    mode: 'viewed',
+    tag: 'Browsing Affinity',
+    title: 'Because You Viewed',
+    subtitle: `Personalized matches — ${rationale}`,
+    products: candidates.slice(0, 4),
+    isEmpty: false
+  };
+}
+
+function getBuyAgainRecommendations() {
+  const orders = getOrders();
+  if (!orders || orders.length === 0) {
+    return {
+      mode: 'buy-again',
+      tag: 'Repurchase Hub',
+      title: 'Buy Again',
+      subtitle: 'Quickly restock your past orders in one click',
+      products: [],
+      isEmpty: true,
+      emptyIcon: '🔄',
+      emptyTitle: 'No Past Orders to Reorder',
+      emptySub: 'Items you purchase will appear here so you can reorder your favorite essentials in a single click.',
+      emptyBtnText: 'Explore Trending Essentials',
+      emptyBtnAction: "window.switchRecommendationMode('trending')"
+    };
+  }
+
+  const itemMap = new Map();
+  orders.forEach(order => {
+    (order.items || []).forEach(item => {
+      if (!itemMap.has(item.id)) {
+        itemMap.set(item.id, {
+          id: item.id,
+          count: 0,
+          totalQty: 0,
+          lastOrderDate: order.date
+        });
+      }
+      const entry = itemMap.get(item.id);
+      entry.count += 1;
+      entry.totalQty += (item.qty || 1);
+    });
+  });
+
+  const sortedEntries = Array.from(itemMap.values()).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return b.totalQty - a.totalQty;
+  });
+
+  const candidates = sortedEntries.map(entry => {
+    const prod = PRODUCTS.find(p => p.id === entry.id);
+    if (!prod) return null;
+    return {
+      ...prod,
+      reorderBadge: entry.count > 1 ? `Ordered ${entry.count}x` : 'Purchased before'
+    };
+  }).filter(Boolean);
+
+  if (candidates.length === 0) {
+    return {
+      mode: 'buy-again',
+      tag: 'Repurchase Hub',
+      title: 'Buy Again',
+      subtitle: 'Quickly restock your past orders in one click',
+      products: [],
+      isEmpty: true,
+      emptyIcon: '🔄',
+      emptyTitle: 'No Past Orders to Reorder',
+      emptySub: 'Items you purchase will appear here so you can reorder your favorite essentials in a single click.',
+      emptyBtnText: 'Explore Trending Essentials',
+      emptyBtnAction: "window.switchRecommendationMode('trending')"
+    };
+  }
+
+  return {
+    mode: 'buy-again',
+    tag: 'Repurchase Hub',
+    title: 'Buy Again',
+    subtitle: 'Reorder your trusted favorites with rapid 1-click checkout',
+    products: candidates.slice(0, 4),
+    isEmpty: false
+  };
+}
+
+function getTrendingRecommendations() {
+  const orders = getOrders();
+  const orderCountMap = {};
+  orders.forEach(order => {
+    (order.items || []).forEach(item => {
+      orderCountMap[item.id] = (orderCountMap[item.id] || 0) + (item.qty || 1);
+    });
+  });
+
+  const scored = PRODUCTS.map(product => {
+    const ratingScore = (product.rating || 4.5) * 20;
+    const reviewScore = Math.min(30, (product.reviewCount || 100) / 10);
+    const badgeBonus = (product.badge === 'Trending' || product.badge === 'Best Seller') ? 15 : (product.badge ? 8 : 0);
+    const orderBonus = (orderCountMap[product.id] || 0) * 10;
+    const totalScore = ratingScore + reviewScore + badgeBonus + orderBonus;
+    return { product, totalScore };
+  });
+
+  scored.sort((a, b) => b.totalScore - a.totalScore);
+  const candidates = scored.slice(0, 4).map(s => s.product);
+
+  return {
+    mode: 'trending',
+    tag: 'Community Favorites',
+    title: 'Trending Essentials',
+    subtitle: 'Top-rated, verified essentials most loved by our shoppers this week',
+    products: candidates,
+    isEmpty: false
+  };
+}
+
+function getPersonalizedRecommendations() {
+  return getCuratedRecommendations();
+}
+
+function switchRecommendationMode(mode) {
+  const validModes = ['curated', 'viewed', 'buy-again', 'trending'];
+  if (!validModes.includes(mode)) {
+    mode = 'curated';
+  }
+  currentRecommendationMode = mode;
+
+  const tabIds = {
+    'curated': 'recTabCurated',
+    'viewed': 'recTabViewed',
+    'buy-again': 'recTabBuyAgain',
+    'trending': 'recTabTrending'
+  };
+
+  Object.entries(tabIds).forEach(([m, id]) => {
+    const tabEl = document.getElementById(id);
+    if (tabEl) {
+      const isActive = m === mode;
+      tabEl.classList.toggle('active', isActive);
+      tabEl.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      tabEl.setAttribute('tabindex', isActive ? '0' : '-1');
+    }
+  });
+
+  renderPersonalizedRecommendations();
+}
+
+function initRecommendationTabs() {
+  const wrapper = document.querySelector('.rec-tabs-wrapper');
+  if (!wrapper) return;
+
+  const modeOrder = ['curated', 'viewed', 'buy-again', 'trending'];
+  const tabIds = ['recTabCurated', 'recTabViewed', 'recTabBuyAgain', 'recTabTrending'];
+
+  tabIds.forEach((id, idx) => {
+    const tab = document.getElementById(id);
+    if (tab) {
+      const isActive = modeOrder[idx] === currentRecommendationMode;
+      tab.setAttribute('tabindex', isActive ? '0' : '-1');
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    }
+  });
+
+  wrapper.addEventListener('keydown', (e) => {
+    const activeIndex = modeOrder.indexOf(currentRecommendationMode);
+    if (activeIndex === -1) return;
+
+    let newIndex = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      newIndex = (activeIndex + 1) % modeOrder.length;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      newIndex = (activeIndex - 1 + modeOrder.length) % modeOrder.length;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      newIndex = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      newIndex = modeOrder.length - 1;
+    }
+
+    if (newIndex !== null) {
+      const nextMode = modeOrder[newIndex];
+      switchRecommendationMode(nextMode);
+      const nextTab = document.getElementById(tabIds[newIndex]);
+      if (nextTab) nextTab.focus();
+    }
+  });
 }
 
 function renderPersonalizedRecommendations() {
@@ -3961,12 +4193,41 @@ function renderPersonalizedRecommendations() {
   const tag = document.getElementById('recommendedTag');
   if (!grid) return;
 
-  const { rationale, products } = getPersonalizedRecommendations();
+  let result;
+  switch (currentRecommendationMode) {
+    case 'viewed':
+      result = getViewedRecommendations();
+      break;
+    case 'buy-again':
+      result = getBuyAgainRecommendations();
+      break;
+    case 'trending':
+      result = getTrendingRecommendations();
+      break;
+    case 'curated':
+    default:
+      result = getCuratedRecommendations();
+      break;
+  }
 
-  if (subtitle) subtitle.textContent = `Personalized selections — ${rationale}`;
-  if (tag) tag.textContent = rationale.includes('Because') ? 'Tailored Insights' : 'Curated For You';
+  if (subtitle) subtitle.textContent = result.subtitle;
+  if (tag) tag.textContent = result.tag;
 
-  grid.innerHTML = products.map(product => {
+  if (result.isEmpty) {
+    grid.innerHTML = `
+      <div class="rec-empty-state">
+        <div class="rec-empty-icon">${result.emptyIcon || '✨'}</div>
+        <h4 class="rec-empty-title">${result.emptyTitle || 'No recommendations found'}</h4>
+        <p class="rec-empty-sub">${result.emptySub || ''}</p>
+        <button type="button" class="btn btn-primary rec-empty-btn" onclick="${result.emptyBtnAction}">
+          ${result.emptyBtnText}
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  grid.innerHTML = result.products.map(product => {
     const isWishlisted = getWishlist().includes(product.id);
     const wishlistClass = isWishlisted ? 'active' : '';
     const stock = getProductStock(product.id);
@@ -3981,6 +4242,17 @@ function renderPersonalizedRecommendations() {
       stockBadgeHtml = `<span class="badge badge-stock low-stock" style="background:#f59e0b;color:#fff;">🔥 Only ${stock} left!</span>`;
     }
 
+    let extraBadgeHtml = '';
+    if (product.reorderBadge) {
+      extraBadgeHtml = `<span class="badge badge-repurchase">${escapeHtml(product.reorderBadge)}</span>`;
+    } else if (product.badge) {
+      extraBadgeHtml = `<span class="badge badge-custom">${escapeHtml(product.badge)}</span>`;
+    }
+
+    const btnText = currentRecommendationMode === 'buy-again'
+      ? (isOutOfStock ? 'Sold Out' : '🔄 Buy Again')
+      : (isOutOfStock ? 'Sold Out' : '+ Add to Cart');
+
     return `
       <article class="product-card ${isOutOfStock ? 'is-out-of-stock' : ''}" data-id="${product.id}" onclick="handleCardClick(event, ${product.id})">
         <div class="card-image-wrap">
@@ -3993,10 +4265,11 @@ function renderPersonalizedRecommendations() {
           >
           <div class="card-badges">
             <span class="badge badge-discount">${product.discount}</span>
-            ${product.badge ? `<span class="badge badge-custom">${product.badge}</span>` : ''}
+            ${extraBadgeHtml}
             ${stockBadgeHtml}
           </div>
           <button 
+            type="button"
             class="card-wishlist-btn ${wishlistClass}" 
             onclick="event.stopPropagation(); toggleWishlist(${product.id})"
             aria-label="Add ${escapeHtml(product.name)} to wishlist"
@@ -4020,12 +4293,13 @@ function renderPersonalizedRecommendations() {
             <span class="original-price">${formatCurrency(product.originalPrice)}</span>
           </div>
           <button 
+            type="button"
             class="btn btn-primary add-to-cart-btn ${isOutOfStock ? 'disabled' : ''}" 
             ${isOutOfStock ? 'disabled' : ''}
             onclick="event.stopPropagation(); addToCart(${product.id})"
-            aria-label="${isOutOfStock ? 'Product out of stock' : 'Add ' + escapeHtml(product.name) + ' to cart'}"
+            aria-label="${isOutOfStock ? 'Product out of stock' : (currentRecommendationMode === 'buy-again' ? 'Buy ' + escapeHtml(product.name) + ' again' : 'Add ' + escapeHtml(product.name) + ' to cart')}"
           >
-            <span>${isOutOfStock ? 'Sold Out' : '+ Add to Cart'}</span>
+            <span>${btnText}</span>
           </button>
         </div>
       </article>
@@ -6480,6 +6754,7 @@ function initNavigation() {
 window.filterProducts = filterProducts;
 window.openProductDetails = openProductDetails;
 window.closeProductDetails = closeProductDetails;
+window.handleCardClick = window.handleProductCardClick;
 window.openCart = openCart;
 window.closeCart = closeCart;
 window.openCheckout = openCheckout;
@@ -6603,6 +6878,14 @@ window.printCurrentDetailOrderInvoice = printCurrentDetailOrderInvoice;
 window.ShopBot = ShopBot;
 window.handlePhase6ChatIntent = handlePhase6ChatIntent;
 
+// Phase 7.1 window exposures
+window.switchRecommendationMode = switchRecommendationMode;
+window.getCuratedRecommendations = getCuratedRecommendations;
+window.getViewedRecommendations = getViewedRecommendations;
+window.getBuyAgainRecommendations = getBuyAgainRecommendations;
+window.getTrendingRecommendations = getTrendingRecommendations;
+window.initRecommendationTabs = initRecommendationTabs;
+
 // -----------------------------------------------------------------------------
 // 13. INITIALIZATION ON DOM READY
 // -----------------------------------------------------------------------------
@@ -6619,6 +6902,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateWishlistCounter();
   renderCart();
   renderRecentlyViewed();
+  initRecommendationTabs();
   renderPersonalizedRecommendations();
   renderOrderHistory();
   renderAnalytics();
@@ -6626,5 +6910,5 @@ document.addEventListener('DOMContentLoaded', () => {
   renderRewardsDashboard();
   ShopBot.init();
   initNavigation();
-  console.log('ShopSphere AI Phase 6.7 initialized successfully.');
+  console.log('ShopSphere AI Phase 7.1 initialized successfully.');
 });
